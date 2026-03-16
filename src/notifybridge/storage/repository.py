@@ -172,7 +172,7 @@ class Repository:
         self,
         *,
         api_key: str | None,
-        source_ip: str | None,
+        source_ip: str | None = None,
         source_type: str,
         assignment_type: str,
         title: str,

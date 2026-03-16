@@ -29,5 +29,8 @@ class SMTPHandler:
         """
         peer = getattr(session, "peer", None)
         remote_addr = peer[0] if isinstance(peer, tuple) and peer else ""
-        await self.ingestion.ingest_email(envelope.original_content, remote_addr)
+        try:
+            await self.ingestion.ingest_email(envelope.original_content, remote_addr)
+        except TypeError:
+            await self.ingestion.ingest_email(envelope.original_content)
         return "250 Message accepted"
