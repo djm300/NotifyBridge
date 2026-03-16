@@ -1,0 +1,85 @@
+:root {
+  --bg: #0f172a;
+  --bg-soft: #111827;
+  --panel: rgba(15, 23, 42, 0.82);
+  --text: #e5eefb;
+  --muted: #9fb3c8;
+  --accent: #34d399;
+  --accent-2: #38bdf8;
+  --border: rgba(148, 163, 184, 0.24);
+  --shadow: 0 22px 60px rgba(15, 23, 42, 0.4);
+}
+
+html[data-theme="light"] {
+  --bg: #f4f7fb;
+  --bg-soft: #ffffff;
+  --panel: rgba(255, 255, 255, 0.95);
+  --text: #142033;
+  --muted: #53657b;
+  --accent: #0f766e;
+  --accent-2: #2563eb;
+  --border: rgba(15, 23, 42, 0.1);
+  --shadow: 0 16px 36px rgba(15, 23, 42, 0.08);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.2), transparent 30%),
+    radial-gradient(circle at top right, rgba(52, 211, 153, 0.15), transparent 35%),
+    linear-gradient(160deg, var(--bg), var(--bg-soft));
+}
+.shell { padding: 2rem; max-width: 1400px; margin: 0 auto; }
+.hero { display: flex; justify-content: space-between; align-items: end; gap: 1rem; margin-bottom: 1.5rem; }
+.eyebrow { text-transform: uppercase; letter-spacing: 0.16em; color: var(--accent-2); font-size: 0.75rem; }
+h1, h2 { margin: 0 0 0.75rem; }
+.grid { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 1rem; }
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  padding: 1rem;
+  backdrop-filter: blur(16px);
+  min-height: 65vh;
+}
+.button, button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: white;
+  padding: 0.65rem 1rem;
+  cursor: pointer;
+}
+.button.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+input {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+form { display: flex; gap: 0.75rem; margin-bottom: 1rem; }
+.list-item {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+.list-item.new { border-color: var(--accent); }
+.meta { color: var(--muted); font-size: 0.86rem; }
+@media (max-width: 1000px) {
+  .grid { grid-template-columns: 1fr; }
+  .panel { min-height: auto; }
+  .hero { align-items: start; flex-direction: column; }
+  form { flex-direction: column; }
+}

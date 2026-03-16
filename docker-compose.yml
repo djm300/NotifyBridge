@@ -1,0 +1,17 @@
+services:
+  notifybridge:
+    build: .
+    ports:
+      - "8000:8000"
+      - "2525:2525"
+      - "5514:5514/udp"
+    environment:
+      NOTIFYBRIDGE_SQLITE_PATH: /data/notifybridge.db
+      NOTIFYBRIDGE_HTTP_HOST: 0.0.0.0
+      NOTIFYBRIDGE_SMTP_HOST: 0.0.0.0
+      NOTIFYBRIDGE_SYSLOG_HOST: 0.0.0.0
+    volumes:
+      - notifybridge-data:/data
+
+volumes:
+  notifybridge-data:

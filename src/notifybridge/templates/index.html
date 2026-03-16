@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ settings.theme_default }}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NotifyBridge</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">NotifyBridge</p>
+          <h1>Local notification intake, replay, and triage.</h1>
+        </div>
+        <button id="theme-toggle" class="button ghost">Toggle theme</button>
+      </header>
+      <section class="grid">
+        <section class="panel">
+          <h2>API Keys</h2>
+          <form id="key-form">
+            <input name="api_key" placeholder="team-red" />
+            <button class="button" type="submit">Add key</button>
+          </form>
+          <div id="keys"></div>
+        </section>
+        <section class="panel">
+          <h2>Notifications</h2>
+          <div id="notifications"></div>
+        </section>
+        <section class="panel">
+          <h2>Audit Log</h2>
+          <div id="audit"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
