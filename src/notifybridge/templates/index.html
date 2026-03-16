@@ -7,37 +7,65 @@
     <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>
-    <main class="shell">
+    <main
+      class="shell"
+      data-http-port="{{ settings.http_port }}"
+      data-smtp-port="{{ settings.smtp_port }}"
+      data-syslog-port="{{ settings.syslog_port }}"
+      data-email-domain="{{ settings.email_domain }}"
+    >
       <header class="hero">
-        <div>
+        <div class="hero-copy">
           <p class="eyebrow">NotifyBridge</p>
-          <h1>Local notification intake, replay, and triage.</h1>
+          <h1>Local intake with a calm operator surface.</h1>
+          <p class="hero-subtitle">
+            Review unread activity first, inspect failed attempts separately, and generate exact localhost test commands per key.
+          </p>
         </div>
         <div class="hero-actions">
-          <button id="random-button" class="button ghost">Random Demo</button>
-          <button id="clear-all-button" class="button ghost">Clear All</button>
-          <button id="theme-toggle" class="button ghost">Toggle theme</button>
+          <button id="random-button" class="button ghost" type="button">Random Demo</button>
+          <button id="clear-all-button" class="button ghost" type="button">Clear All</button>
+          <button id="theme-toggle" class="button ghost" type="button">Toggle theme</button>
         </div>
       </header>
+      <section class="overview" id="overview"></section>
       <section class="grid">
-        <section class="panel">
-          <h2>API Keys</h2>
-          <form id="key-form">
-            <button class="button" type="submit">Generate key</button>
-          </form>
+        <section class="panel" id="keys-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>API Keys</h2>
+              <p class="panel-subtitle">Click a key to focus its inbox. Use guide and status controls only when needed.</p>
+            </div>
+            <div class="panel-actions left-actions">
+              <button id="syslog-mode-button" class="button ghost" type="button">Syslog: Strict</button>
+              <form id="key-form">
+                <button class="button" type="submit">New key</button>
+              </form>
+            </div>
+          </div>
           <div id="keys"></div>
+          <div id="usage-tip" class="usage-tip-overlay"></div>
         </section>
         <section class="panel">
           <div class="panel-heading">
-            <h2>Notifications</h2>
-            <button id="clear-filter-button" class="button ghost">Filter: All</button>
+            <div>
+              <h2>Notifications</h2>
+              <p class="panel-subtitle">Unread first, with per-key focus when you need it.</p>
+            </div>
+            <div class="panel-actions">
+              <button id="notification-state-button" class="button ghost" type="button">View: Unread</button>
+              <button id="clear-filter-button" class="button ghost" type="button">All keys</button>
+            </div>
           </div>
           <div id="notifications"></div>
         </section>
         <section class="panel collapsed" id="audit-panel" data-collapsed="true">
           <div class="panel-heading">
-            <h2>Audit Log</h2>
-            <button id="audit-toggle-button" class="button ghost">Expand Audit Log</button>
+            <div>
+              <h2>Audit Log</h2>
+              <p class="panel-subtitle">Rejected or accepted ingress attempts, newest first.</p>
+            </div>
+            <button id="audit-toggle-button" class="button ghost" type="button">Expand Audit Log</button>
           </div>
           <div id="audit"></div>
         </section>

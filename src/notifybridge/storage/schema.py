@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     received_at TEXT NOT NULL,
     api_key TEXT,
+    source_ip TEXT,
     source_type TEXT NOT NULL,
     assignment_type TEXT NOT NULL,
     state TEXT NOT NULL,
@@ -54,4 +55,7 @@ def init_db(connection: sqlite3.Connection) -> None:
     columns = {row[1] for row in connection.execute("PRAGMA table_info(api_keys)").fetchall()}
     if "enabled" not in columns:
         connection.execute("ALTER TABLE api_keys ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+    notification_columns = {row[1] for row in connection.execute("PRAGMA table_info(notifications)").fetchall()}
+    if "source_ip" not in notification_columns:
+        connection.execute("ALTER TABLE notifications ADD COLUMN source_ip TEXT")
     connection.commit()

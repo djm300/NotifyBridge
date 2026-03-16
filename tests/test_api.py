@@ -35,6 +35,7 @@ def test_key_crud_and_notifications_flow(tmp_path):
     assert ingest.status_code == 201
     items = client.get("/api/notifications", params={"api_key": api_key}).json()["items"]
     assert len(items) == 1
+    assert items[0]["source_ip"] == "testclient"
     notification_id = items[0]["id"]
 
     read = client.post(f"/api/notifications/{notification_id}/read")
@@ -45,6 +46,10 @@ def test_key_crud_and_notifications_flow(tmp_path):
     deleted = client.delete(f"/api/notifications/{notification_id}")
     assert deleted.status_code == 200
     assert client.get("/api/notifications").json()["items"] == []
+    syslog_mode = client.post("/api/settings/syslog-mode", json={"allow_without_api": True})
+    assert syslog_mode.status_code == 200
+    assert syslog_mode.json()["allow_without_api"] is True
+    assert client.get("/api/keys").json()["unassigned"]["enabled"] is True
     runtime.repository.remove_api_key(api_key)
 
 
@@ -68,14 +73,18 @@ def test_clear_all_and_random_demo_routes(tmp_path, monkeypatch):
     client, runtime = make_client(tmp_path)
     runtime.repository.add_api_key("team-red")
     client.post("/ingest/webhook/team-red", json={"title": "One"})
+    client.post("/ingest/webhook/missing", json={"title": "Rejected"})
+    assert len(client.get("/api/audit").json()["items"]) == 2
     cleared = client.delete("/api/notifications")
     assert cleared.status_code == 200
     assert client.get("/api/notifications").json()["items"] == []
+    assert client.get("/api/audit").json()["items"] == []
 
     async def fake_seed_random_demo(settings, count=5):
         runtime.repository.add_api_key("AbCdEf0123456789ZyXw")
         runtime.repository.create_notification(
             api_key="AbCdEf0123456789ZyXw",
+            source_ip="127.0.0.1",
             source_type="webhook",
             assignment_type="api_key",
             title="demo",
@@ -106,6 +115,8 @@ async def test_event_stream_and_validation(tmp_path):
     client, _runtime = make_client(tmp_path)
     invalid = client.post("/api/notifications/bulk-delete", json={"ids": "bad"})
     assert invalid.status_code == 400
+    invalid_syslog_mode = client.post("/api/settings/syslog-mode", json={"allow_without_api": "bad"})
+    assert invalid_syslog_mode.status_code == 400
     missing = client.get("/api/notifications/999")
     assert missing.status_code == 404
     scope = {"type": "http", "app": client.app, "method": "GET", "path": "/api/events", "headers": []}

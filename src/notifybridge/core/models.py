@@ -15,6 +15,7 @@ class Notification:
     id: int | None
     received_at: str
     api_key: str | None
+    source_ip: str | None
     source_type: str
     assignment_type: str
     state: str

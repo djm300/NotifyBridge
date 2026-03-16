@@ -172,6 +172,7 @@ class Repository:
         self,
         *,
         api_key: str | None,
+        source_ip: str | None,
         source_type: str,
         assignment_type: str,
         title: str,
@@ -192,13 +193,14 @@ class Repository:
             cursor = conn.execute(
                 """
                 INSERT INTO notifications(
-                    received_at, api_key, source_type, assignment_type, state,
+                    received_at, api_key, source_ip, source_type, assignment_type, state,
                     title, body, raw_payload, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     utc_now(),
                     api_key,
+                    source_ip,
                     source_type,
                     assignment_type,
                     state,
@@ -261,6 +263,7 @@ class Repository:
             id=row["id"],
             received_at=row["received_at"],
             api_key=row["api_key"],
+            source_ip=row["source_ip"],
             source_type=row["source_type"],
             assignment_type=row["assignment_type"],
             state=row["state"],
@@ -391,6 +394,18 @@ class Repository:
         """
         with self.connection() as conn:
             conn.execute("DELETE FROM notifications")
+
+    def clear_audit_entries(self) -> None:
+        """Delete all stored audit log entries.
+
+        Inputs:
+        - None.
+
+        Outputs:
+        - Removes every row from the audit log table.
+        """
+        with self.connection() as conn:
+            conn.execute("DELETE FROM audit_log")
 
     def clear_unassigned_notifications(self) -> None:
         """Delete all unassigned syslog notifications.

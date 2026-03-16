@@ -27,5 +27,7 @@ class SMTPHandler:
         Outputs:
         - SMTP success string after forwarding the raw message to ingestion.
         """
-        await self.ingestion.ingest_email(envelope.original_content)
+        peer = getattr(session, "peer", None)
+        remote_addr = peer[0] if isinstance(peer, tuple) and peer else ""
+        await self.ingestion.ingest_email(envelope.original_content, remote_addr)
         return "250 Message accepted"

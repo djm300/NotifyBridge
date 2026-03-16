@@ -12,6 +12,7 @@ def test_repository_key_crud_and_counts(tmp_path):
 
     first = repo.create_notification(
         api_key="team-red",
+        source_ip="127.0.0.1",
         source_type="webhook",
         assignment_type="api_key",
         title="one",
@@ -21,6 +22,7 @@ def test_repository_key_crud_and_counts(tmp_path):
     )
     second = repo.create_notification(
         api_key="team-red",
+        source_ip=None,
         source_type="email",
         assignment_type="api_key",
         title="two",
@@ -38,7 +40,9 @@ def test_repository_key_crud_and_counts(tmp_path):
     assert summaries["team-blue"].total_count == 0
     assert summaries["team-blue"].enabled is False
     repo.delete_notification(second)
-    assert len(repo.list_notifications("team-red")) == 1
+    remaining = repo.list_notifications("team-red")
+    assert len(remaining) == 1
+    assert remaining[0].source_ip == "127.0.0.1"
 
 
 def test_repository_bulk_delete_clear_and_unassigned(tmp_path):
@@ -46,6 +50,7 @@ def test_repository_bulk_delete_clear_and_unassigned(tmp_path):
     repo.add_api_key("team-red")
     one = repo.create_notification(
         api_key="team-red",
+        source_ip="127.0.0.1",
         source_type="webhook",
         assignment_type="api_key",
         title="1",
@@ -55,6 +60,7 @@ def test_repository_bulk_delete_clear_and_unassigned(tmp_path):
     )
     two = repo.create_notification(
         api_key=None,
+        source_ip="127.0.0.2",
         source_type="syslog",
         assignment_type="unassigned",
         title="2",
@@ -64,6 +70,7 @@ def test_repository_bulk_delete_clear_and_unassigned(tmp_path):
     )
     three = repo.create_notification(
         api_key="team-red",
+        source_ip=None,
         source_type="email",
         assignment_type="api_key",
         title="3",
@@ -100,6 +107,7 @@ def test_remove_api_key_cascades_notifications(tmp_path):
     repo.add_api_key("team-red")
     repo.create_notification(
         api_key="team-red",
+        source_ip="127.0.0.1",
         source_type="webhook",
         assignment_type="api_key",
         title="to be removed",

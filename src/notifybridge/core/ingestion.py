@@ -66,6 +66,7 @@ class IngestionService:
         *,
         source_type: str,
         api_key_candidate: str | None,
+        source_ip: str | None,
         assignment_type: str,
         bucket: str,
         title: str,
@@ -85,6 +86,7 @@ class IngestionService:
         """
         notification_id = self.repository.create_notification(
             api_key=api_key_candidate if assignment_type == "api_key" else None,
+            source_ip=source_ip,
             source_type=source_type,
             assignment_type=assignment_type,
             title=title,
@@ -129,6 +131,7 @@ class IngestionService:
         return await self._accept(
             source_type="webhook",
             api_key_candidate=api_key,
+            source_ip=remote_addr or None,
             assignment_type="api_key",
             bucket=api_key,
             title=title,
@@ -139,11 +142,12 @@ class IngestionService:
             audit_metadata={"remote_addr": remote_addr},
         )
 
-    async def ingest_email(self, raw_message: bytes) -> IngestResult:
+    async def ingest_email(self, raw_message: bytes, remote_addr: str = "") -> IngestResult:
         """Handle one raw email.
 
         Inputs:
         - `raw_message`: RFC 2822 message bytes.
+        - `remote_addr`: SMTP client IP when available.
 
         Outputs:
         - `IngestResult` describing acceptance, audit entry, and bucket routing.
@@ -164,6 +168,7 @@ class IngestionService:
         return await self._accept(
             source_type="email",
             api_key_candidate=api_key,
+            source_ip=remote_addr or None,
             assignment_type="api_key",
             bucket=api_key,
             title=title,
@@ -206,6 +211,7 @@ class IngestionService:
         return await self._accept(
             source_type="syslog",
             api_key_candidate=api_key,
+            source_ip=remote_addr or None,
             assignment_type=assignment_type,
             bucket=bucket,
             title=title,

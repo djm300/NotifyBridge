@@ -138,6 +138,32 @@ async def set_key_enabled(api_key: str, request: Request):
     return {"api_key": api_key, "enabled": enabled}
 
 
+@router.post("/api/settings/syslog-mode")
+async def set_syslog_mode(request: Request):
+    """Enable or disable permissive syslog acceptance for unkeyed messages.
+
+    Inputs:
+    - `request`: JSON body with `allow_without_api`.
+
+    Outputs:
+    - JSON acknowledgement with the persisted syslog acceptance mode.
+
+    Why the decorator is used:
+    - `@router.post` exposes this state-change handler as an HTTP endpoint.
+    """
+    payload = await request.json()
+    allow_without_api = payload.get("allow_without_api")
+    if not isinstance(allow_without_api, bool):
+        raise HTTPException(status_code=400, detail="allow_without_api must be a boolean")
+    repo = request.app.state.runtime.repository
+    repo.set_syslog_mode(allow_without_api)
+    await request.app.state.runtime.event_bus.publish(
+        "settings.changed",
+        {"syslog_mode": "permissive" if allow_without_api else "strict"},
+    )
+    return {"allow_without_api": allow_without_api}
+
+
 @router.get("/api/notifications")
 async def list_notifications(request: Request, api_key: str | None = None, assignment_type: str | None = None):
     """List notifications with optional API key and assignment filters.
@@ -266,20 +292,21 @@ async def clear_key_notifications(api_key: str, request: Request):
 
 @router.delete("/api/notifications")
 async def clear_all_notifications(request: Request):
-    """Delete all notifications across all keys and buckets.
+    """Delete all notifications and audit entries across all keys and buckets.
 
     Inputs:
     - `request`: FastAPI request carrying app state.
 
     Outputs:
-    - JSON acknowledgement confirming that all notifications were cleared.
+    - JSON acknowledgement confirming that notifications and audit entries were cleared.
 
     Why the decorator is used:
     - `@router.delete` exposes this destructive handler as an HTTP DELETE endpoint.
     """
     repo = request.app.state.runtime.repository
     repo.clear_all_notifications()
-    await request.app.state.runtime.event_bus.publish("notifications.cleared_all", {})
+    repo.clear_audit_entries()
+    await request.app.state.runtime.event_bus.publish("notifications.cleared_all", {"audit_cleared": True})
     return {"cleared": "all"}
 
 
