@@ -1,4 +1,307 @@
-* A local platform to support debugging/testing notifications
-* I'd like to build a notifier platform supporting webhooks, emails (unauth SMTP) & syslog - find a catchy name for it
-* Authentication should happen via webhook URL path, via email subject (prefix it with auth key) and via SYSLOG (use CEF standard format, find out if we can use CEF and insert an auth key somewhere). All input not matching a key should be silently discarded asap
-* Web UI with backend in python. All 3 methods of input should lead to the same notifications in the same window. Dofferent tabs for differnet API keys.
+# NotifyBridge Specification
+
+## 1. Product Summary
+
+NotifyBridge is a local notification intake and debugging platform for testing and inspecting inbound notifications from multiple transport types in one place.
+
+The first release accepts notifications over:
+
+- Webhooks
+- Email over unauthenticated SMTP
+- Syslog
+
+All accepted inputs are normalized into one internal notification model and shown in the same web UI.
+
+## 2. Goals
+
+- Provide a local developer tool for testing notification delivery paths.
+- Make it easy to inspect notifications from different transports in one timeline.
+- Separate notifications by API key so different test streams do not mix.
+- Discard any input that does not match a known API key as early and quietly as possible.
+
+## 3. Non-Goals
+
+- Production-grade multi-tenant hosting
+- Outbound notification sending
+- User accounts, SSO, or RBAC in v1
+- Compliance-grade audit retention or tamper-proof logging
+- Full SMTP authentication, TLS termination, or hardened Internet exposure in v1
+
+## 4. Product Name
+
+Working product name: `NotifyBridge`
+
+Rationale:
+
+- Describes bridging multiple input transports into one normalized view.
+- Reads clearly for both a developer tool and a future hosted product.
+
+## 5. High-Level Architecture
+
+- Full-stack implementation language: Python
+- Backend: Python application server
+- Frontend: Fancy web UI served by the Python backend
+- Storage: SQLite for notifications, audit log entries, and API key configuration
+- Intake services:
+  - HTTP webhook listener
+  - SMTP listener
+  - Syslog listener
+
+Each intake path must validate the API key before any non-essential parsing or notification storage. Every received input should create a lightweight audit log entry, but only authenticated input is normalized, stored as a notification, and published to the main UI.
+
+## 6. Authentication Model
+
+The system uses API keys. Each key represents one isolated notification stream in the UI.
+
+### 6.1 Webhook Authentication
+
+- Authentication happens in the request path.
+- Example shape: `POST /ingest/webhook/<api_key>`
+- Requests with an unknown key are rejected immediately after path validation, before payload parsing. They should still generate an audit log entry.
+
+Examples, assuming `team-red` is a configured API key:
+
+Valid:
+
+```http
+POST /ingest/webhook/team-red HTTP/1.1
+Host: localhost:8000
+Content-Type: application/json
+
+{"title":"Build complete","body":"nightly pipeline finished successfully"}
+```
+
+Invalid:
+
+```http
+POST /ingest/webhook/unknown-key HTTP/1.1
+Host: localhost:8000
+Content-Type: application/json
+
+{"title":"Build complete","body":"nightly pipeline finished successfully"}
+```
+
+### 6.2 Email Authentication
+
+- Authentication happens through a required to address.
+- Example shape: `To: <api_key>@notifybridge.local`
+- Only the primary `To:` field is used for API key authentication.
+- `CC:`, `BCC:`, and `Subject:` must not be used for API key authentication.
+- Emails without a valid key-specific `To:` address are rejected as soon as the primary recipient address is available, before deeper MIME/body processing. They should still generate an audit log entry.
+- Attachments must be stripped in v1 and must not cause the email to be rejected on their own.
+
+Examples, assuming `team-red` is a configured API key:
+
+Valid:
+
+```email
+From: alerts@example.test
+To: team-red@notifybridge.local
+Subject: Disk usage warning
+
+/var is above 85% usage on host app-01.
+```
+
+Invalid:
+
+```email
+From: alerts@example.test
+To: hello@notifybridge.local
+CC: team-red@notifybridge.local
+Subject: Disk usage warning
+
+/var is above 85% usage on host app-01.
+```
+
+### 6.3 Syslog Authentication
+
+- Any syslog message format should be accepted in v1; CEF is optional, not required.
+- Preferred auth mechanism: RFC 5424 structured data carrying the API key, for example `[notifybridge@32473 apiKey="team-red"]`
+- Fallback auth mechanism: a simple NotifyBridge prefix at the start of the message body
+- Preferred fallback convention for v1: message body begins with `[nb:<api_key>] `
+
+Syslog validation order:
+
+1. Check RFC 5424 structured data for a `notifybridge` API key field.
+2. If not present, check for the leading `[nb:<api_key>]` message prefix.
+3. If neither is present or the key is unknown, handle the message according to the syslog acceptance mode.
+
+Syslog acceptance modes:
+
+- Default mode: require a valid API key for syslog notification ingestion.
+- Optional permissive mode: accept all syslog messages, including those without an API key.
+
+In permissive mode, syslog messages without a recognized API key must still be ingested, but they should be routed to a dedicated unassigned syslog bucket in the UI rather than mixed into a real API key stream.
+
+Syslog handling should extract only the minimum required fields needed to validate structured data or the message prefix first. Messages that fail key validation in default mode must be excluded from notification persistence, but still captured in the audit log.
+
+Examples, assuming `team-red` is a configured API key:
+
+Valid:
+
+```text
+<134>1 2026-03-16T20:00:00Z app-01 notifybridge 1234 ID47 [notifybridge@32473 apiKey="team-red"] backup run failed
+```
+
+Also valid:
+
+```text
+<134>Mar 16 20:00:00 app-01 [nb:team-red] backup run failed
+```
+
+Invalid because the auth key is unknown:
+
+```text
+<134>Mar 16 20:00:00 app-01 [nb:unknown-key] backup run failed
+```
+
+Invalid because the auth prefix is missing:
+
+```text
+<134>Mar 16 20:00:00 app-01 backup run failed
+```
+
+Permissive-mode behavior for missing API key:
+
+```text
+<134>Mar 16 20:00:00 app-01 backup run failed
+```
+
+In permissive mode, this message is accepted and routed to the unassigned syslog bucket.
+
+Open implementation note:
+
+- Structured data is preferred because it is explicit and machine-parseable.
+- The prefix convention remains necessary as a fallback for simple or legacy syslog senders.
+- If a sender emits CEF or other structured payloads, that content may still be preserved in the payload, but auth does not depend on CEF.
+
+## 7. Notification Normalization
+
+All accepted transport-specific inputs are converted into one internal notification record with these fields:
+
+- `id`
+- `received_at`
+- `api_key`
+- `source_type` (`webhook`, `email`, `syslog`)
+- `assignment_type` (`api_key` or `unassigned` for permissive syslog)
+- `state` (`new` or `read`)
+- `title`
+- `body`
+- `raw_payload`
+- `metadata`
+
+Normalization rules:
+
+- Preserve the original raw payload for debugging.
+- Extract a best-effort title and body for list/detail display.
+- Record transport-specific metadata such as headers, sender, remote address, syslog host, and any parsed structured syslog fields when available.
+- New notifications are created with state `new`.
+
+Authenticated inputs become notification records in the matching API key stream. In permissive syslog mode, unauthenticated syslog inputs may also become notification records in the unassigned syslog bucket.
+
+## 8. Audit Log
+
+The system must maintain a separate audit log of all received inputs, including invalid or unauthenticated ones.
+
+Each audit log entry should include:
+
+- `id`
+- `received_at`
+- `source_type`
+- `auth_status` (`accepted`, `unknown_key`, `missing_key`, `invalid_format`, or similar)
+- `api_key_candidate` when one can be extracted safely
+- `summary`
+- `raw_payload` or a safe raw excerpt
+- `metadata`
+
+Audit log rules:
+
+- The audit log is distinct from the main notification timeline.
+- Invalid inputs must not appear as normal notifications.
+- Audit logging should happen with minimal parsing and without promoting invalid messages into the main notification store.
+- The audit log is for local debugging and traceability, not compliance-grade immutability.
+
+## 9. Web UI Requirements
+
+The UI must provide:
+
+- A shared notification viewer for all supported source types
+- Separate tabs or equivalent sections per API key
+- A dedicated unassigned syslog section when permissive syslog mode is enabled
+- A dedicated key management area separate from the notification timeline
+- The ability to add API keys from the UI
+- The ability to remove API keys from the UI
+- The ability to list all configured API keys
+- Per-key counts showing how many notifications already exist and how many are new/unread
+- Counts for the unassigned syslog bucket when permissive syslog mode is enabled
+- A mixed timeline inside each API key view showing webhook, email, and syslog notifications together
+- A detail panel for the selected notification
+- The ability to mark messages as read
+- The ability to distinguish new versus read messages visually, similar to a mail inbox
+- The ability to delete a single message
+- The ability to mass delete selected messages
+- The ability to clear all messages for a specific API key
+- Clear labels for source type and received time
+- A polished, modern visual design rather than a bare utility interface
+- User-selectable dark mode and light mode
+- Theme switching that applies consistently across the full UI
+- A layout that feels suitable for demos as well as debugging
+- Access to an audit log view showing accepted and rejected inputs
+
+Within a single API key tab, notifications from all three intake methods appear in the same window and are sorted by receipt time.
+
+Additional UI expectations:
+
+- The default experience should feel visually refined, with strong typography, spacing, contrast, and status treatment.
+- Dark and light themes should both be first-class, not an afterthought.
+- The selected theme should persist across page reloads.
+- The audit log view should clearly distinguish accepted versus rejected inputs.
+- The key management area should make it easy to understand per-key volume at a glance.
+- Read/unread state should be easy to scan and act on.
+- The unassigned syslog bucket should be visually distinct from real API key streams.
+
+## 10. Data Handling Requirements
+
+- Unknown or invalid keys must be rejected as soon as the API key check can be performed.
+- The system must avoid expensive parsing, notification normalization, notification persistence, and main UI publication before auth validation succeeds.
+- All received inputs should create an audit log entry even when they fail validation.
+- Stored notifications must remain scoped to their API key.
+- Permissive syslog mode may store syslog messages without a valid API key, but only in the unassigned syslog bucket.
+- Notifications must persist their `new` or `read` state.
+- Users must be able to delete individual notifications.
+- Users must be able to delete multiple selected notifications in one action.
+- Users must be able to clear all notifications for a specific API key in one action.
+- Raw payloads must be viewable for debugging.
+- Local persistence is provided by SQLite so notifications and audit entries survive a process restart.
+
+## 11. Operational Requirements
+
+- The platform is intended to run locally on a developer machine or lab environment.
+- Default configuration should be simple enough to start with one command.
+- API keys should be configurable from the UI without code changes.
+- The UI should update live using Server-Sent Events (SSE).
+- Syslog acceptance mode should be configurable, with default mode requiring a valid API key and an optional permissive mode accepting all syslog.
+- Logging should avoid leaking full secret keys where possible.
+
+## 12. Initial Success Criteria
+
+The first usable version is complete when:
+
+1. A user can configure at least two API keys.
+2. A valid webhook sent to a key-specific path appears in that key's UI tab.
+3. A valid email addressed to the key-specific `To:` address appears in that key's UI tab, even when attachments are stripped.
+4. A valid syslog message using either RFC 5424 structured data or the agreed `[nb:<api_key>]` prefix appears in the matching key's UI tab.
+5. Invalid webhook and email messages, and invalid syslog messages in default mode, are rejected as early as possible, never appear as normal notifications, and do appear in the audit log.
+6. The notification detail view shows normalized fields plus the raw payload.
+7. The UI supports both dark mode and light mode with a working theme toggle.
+8. The UI includes an audit log view where accepted and rejected inputs can be inspected.
+9. A user can add, remove, and list API keys from the UI and see per-key counts for existing and new notifications.
+10. New notifications appear with state `new`, can be marked `read`, and are visually distinguished in the UI.
+11. A user can delete a single notification, mass delete selected notifications, and clear all notifications for one API key.
+12. When permissive syslog mode is enabled, syslog messages without an API key are accepted into a separate unassigned syslog bucket.
+
+## 13. Resolved Decisions
+
+- Live UI updates use Server-Sent Events (SSE).
+- SMTP attachments are stripped in v1 and do not cause email rejection by themselves.
+- Syslog accepts arbitrary message formats in v1, prefers RFC 5424 structured data for API key auth, falls back to a leading `[nb:<api_key>]` prefix, and can optionally run in permissive mode to accept syslog without an API key.
