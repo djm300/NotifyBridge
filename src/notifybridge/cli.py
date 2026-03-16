@@ -17,7 +17,23 @@ from notifybridge.tui.app import NotifyBridgeTUI
 
 
 def _start_syslog_server(runtime):
+    """Start the UDP syslog listener on a dedicated event loop.
+
+    Inputs:
+    - `runtime`: shared runtime used to obtain settings and ingestion service.
+
+    Outputs:
+    - Runs a long-lived UDP server loop until process shutdown.
+    """
     async def runner():
+        """Run the background UDP server forever.
+
+        Inputs:
+        - None, closes over `runtime`.
+
+        Outputs:
+        - Keeps the UDP listener alive until shutdown.
+        """
         loop = asyncio.get_running_loop()
         transport, _ = await loop.create_datagram_endpoint(
             lambda: SyslogProtocol(runtime.ingestion),
@@ -33,6 +49,14 @@ def _start_syslog_server(runtime):
 
 
 def dev_command() -> int:
+    """Start the full local development stack.
+
+    Inputs:
+    - None. Reads config from the environment via `load_settings`.
+
+    Outputs:
+    - Starts web, SMTP, syslog, and TUI services and returns process exit code.
+    """
     settings = load_settings()
     runtime = build_runtime(settings)
     runtime.logger.info("Starting NotifyBridge")
@@ -83,6 +107,14 @@ def dev_command() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint.
+
+    Inputs:
+    - `argv`: optional argv override for tests or embedded execution.
+
+    Outputs:
+    - Integer process exit code.
+    """
     parser = argparse.ArgumentParser(prog="notifybridge")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("dev")

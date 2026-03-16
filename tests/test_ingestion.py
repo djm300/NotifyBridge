@@ -18,6 +18,16 @@ async def test_webhook_rejects_unknown_key(tmp_path):
     assert repo.list_audit_entries()[0].auth_status == "unknown_key"
 
 
+async def test_webhook_rejects_disabled_key(tmp_path):
+    repo, service = make_service(tmp_path)
+    repo.add_api_key("team-red")
+    repo.set_api_key_enabled("team-red", False)
+    result = await service.ingest_webhook("team-red", {"title": "hello"})
+    assert result.accepted is False
+    assert repo.list_notifications() == []
+    assert repo.list_audit_entries()[0].auth_status == "unknown_key"
+
+
 async def test_email_accepts_primary_to_and_strips_attachments(tmp_path):
     repo, service = make_service(tmp_path)
     repo.add_api_key("team-red")

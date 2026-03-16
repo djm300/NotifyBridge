@@ -8,14 +8,29 @@ from notifybridge.storage.repository import Repository
 
 @dataclass(slots=True)
 class TUIState:
+    """Read-only TUI view-model contract.
+
+    Why the decorator is used:
+    - `@dataclass` is used because the TUI state is a simple immutable-ish
+      bundle of rendered pane lines.
+    """
     logs: list[str]
     keys: list[str]
     messages: list[str]
 
 
 def build_tui_state(repository: Repository, logs: list[LogEntry]) -> TUIState:
+    """Build the three-pane TUI view model.
+
+    Inputs:
+    - `repository`: persistence layer used to read keys and messages.
+    - `logs`: recent buffered log entries.
+
+    Outputs:
+    - `TUIState` containing rendered lines for log, key, and message panes.
+    """
     key_lines = [
-        f"{item.api_key} | total={item.total_count} new={item.new_count} read={item.read_count}"
+        f"{item.api_key} | {'enabled' if item.enabled else 'disabled'} | total={item.total_count} new={item.new_count} read={item.read_count}"
         for item in repository.list_key_summaries()
     ]
     if repository.get_syslog_mode() == "permissive":

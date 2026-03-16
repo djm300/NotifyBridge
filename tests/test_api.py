@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from notifybridge.api.app import create_app
+from notifybridge.api import routes
 from notifybridge.api.routes import event_stream
 from notifybridge.config import load_settings
 from notifybridge.runtime import build_runtime
@@ -16,13 +17,23 @@ def make_client(tmp_path):
 
 def test_key_crud_and_notifications_flow(tmp_path):
     client, runtime = make_client(tmp_path)
-    response = client.post("/api/keys", json={"api_key": "team-red"})
+    response = client.post("/api/keys", json={})
     assert response.status_code == 201
-    assert client.get("/api/keys").json()["keys"][0]["api_key"] == "team-red"
+    api_key = response.json()["api_key"]
+    assert len(api_key) == 20
+    assert client.get("/api/keys").json()["keys"][0]["api_key"] == api_key
+    toggle = client.post(f"/api/keys/{api_key}/enabled", json={"enabled": False})
+    assert toggle.status_code == 200
+    assert client.get("/api/keys").json()["keys"][0]["enabled"] is False
 
-    ingest = client.post("/ingest/webhook/team-red", json={"title": "Build", "body": "ok"})
+    rejected = client.post(f"/ingest/webhook/{api_key}", json={"title": "Build", "body": "ok"})
+    assert rejected.status_code == 202
+
+    client.post(f"/api/keys/{api_key}/enabled", json={"enabled": True})
+
+    ingest = client.post(f"/ingest/webhook/{api_key}", json={"title": "Build", "body": "ok"})
     assert ingest.status_code == 201
-    items = client.get("/api/notifications", params={"api_key": "team-red"}).json()["items"]
+    items = client.get("/api/notifications", params={"api_key": api_key}).json()["items"]
     assert len(items) == 1
     notification_id = items[0]["id"]
 
@@ -34,7 +45,7 @@ def test_key_crud_and_notifications_flow(tmp_path):
     deleted = client.delete(f"/api/notifications/{notification_id}")
     assert deleted.status_code == 200
     assert client.get("/api/notifications").json()["items"] == []
-    runtime.repository.remove_api_key("team-red")
+    runtime.repository.remove_api_key(api_key)
 
 
 def test_bulk_delete_clear_and_audit(tmp_path):
@@ -51,6 +62,44 @@ def test_bulk_delete_clear_and_audit(tmp_path):
     assert client.get("/api/notifications").json()["items"] == []
     audit = client.get("/api/audit").json()["items"]
     assert audit[0]["source_type"] == "webhook"
+
+
+def test_clear_all_and_random_demo_routes(tmp_path, monkeypatch):
+    client, runtime = make_client(tmp_path)
+    runtime.repository.add_api_key("team-red")
+    client.post("/ingest/webhook/team-red", json={"title": "One"})
+    cleared = client.delete("/api/notifications")
+    assert cleared.status_code == 200
+    assert client.get("/api/notifications").json()["items"] == []
+
+    async def fake_seed_random_demo(settings, count=5):
+        runtime.repository.add_api_key("AbCdEf0123456789ZyXw")
+        runtime.repository.create_notification(
+            api_key="AbCdEf0123456789ZyXw",
+            source_type="webhook",
+            assignment_type="api_key",
+            title="demo",
+            body="demo",
+            raw_payload="{}",
+            metadata={},
+        )
+        return ["AbCdEf0123456789ZyXw"]
+
+    monkeypatch.setattr(routes, "seed_random_demo", fake_seed_random_demo)
+    seeded = client.post("/api/demo/random")
+    assert seeded.status_code == 200
+    assert seeded.json()["keys"] == ["AbCdEf0123456789ZyXw"]
+    assert client.get("/api/notifications").json()["items"][0]["title"] == "demo"
+
+
+def test_delete_key_removes_key_notifications(tmp_path):
+    client, runtime = make_client(tmp_path)
+    runtime.repository.add_api_key("team-red")
+    client.post("/ingest/webhook/team-red", json={"title": "One"})
+    assert len(client.get("/api/notifications").json()["items"]) == 1
+    deleted = client.delete("/api/keys/team-red")
+    assert deleted.status_code == 200
+    assert client.get("/api/notifications").json()["items"] == []
 
 
 async def test_event_stream_and_validation(tmp_path):

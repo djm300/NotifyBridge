@@ -12,6 +12,12 @@ from notifybridge.storage.repository import Repository
 
 @dataclass(slots=True)
 class Runtime:
+    """Application runtime contract bundling shared services.
+
+    Why the decorator is used:
+    - `@dataclass` keeps the runtime graph explicit and easy to pass around
+      without writing manual initializer boilerplate.
+    """
     settings: Settings
     repository: Repository
     event_bus: EventBus
@@ -21,6 +27,14 @@ class Runtime:
 
 
 def build_runtime(settings: Settings) -> Runtime:
+    """Construct the application runtime graph.
+
+    Inputs:
+    - `settings`: loaded runtime configuration.
+
+    Outputs:
+    - `Runtime` containing config, storage, logging, event bus, and ingestion service.
+    """
     log_buffer = LogBuffer()
     logger = configure_logging(log_buffer)
     repository = Repository(settings.sqlite_path)

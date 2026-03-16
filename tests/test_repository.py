@@ -6,6 +6,9 @@ def test_repository_key_crud_and_counts(tmp_path):
     repo.add_api_key("team-red")
     repo.add_api_key("team-blue")
     assert repo.list_api_keys() == ["team-blue", "team-red"]
+    repo.set_api_key_enabled("team-blue", False)
+    assert repo.has_api_key("team-blue") is False
+    assert repo.has_api_key("team-red") is True
 
     first = repo.create_notification(
         api_key="team-red",
@@ -29,9 +32,11 @@ def test_repository_key_crud_and_counts(tmp_path):
     repo.mark_read(first)
     summaries = {item.api_key: item for item in repo.list_key_summaries()}
     assert summaries["team-red"].total_count == 2
+    assert summaries["team-red"].enabled is True
     assert summaries["team-red"].new_count == 0
     assert summaries["team-red"].read_count == 2
     assert summaries["team-blue"].total_count == 0
+    assert summaries["team-blue"].enabled is False
     repo.delete_notification(second)
     assert len(repo.list_notifications("team-red")) == 1
 
@@ -88,3 +93,21 @@ def test_repository_audit_log_persistence(tmp_path):
     assert entry is not None
     assert entry.auth_status == "missing_key"
     assert entry.metadata["to"] == "x"
+
+
+def test_remove_api_key_cascades_notifications(tmp_path):
+    repo = Repository(tmp_path / "db.sqlite")
+    repo.add_api_key("team-red")
+    repo.create_notification(
+        api_key="team-red",
+        source_type="webhook",
+        assignment_type="api_key",
+        title="to be removed",
+        body="body",
+        raw_payload="{}",
+        metadata={},
+    )
+    assert len(repo.list_notifications("team-red")) == 1
+    repo.remove_api_key("team-red")
+    assert repo.list_api_keys() == []
+    assert repo.list_notifications("team-red") == []

@@ -1,244 +1,376 @@
-# NotifyBridge Security Notes
+# NotifyBridge Security Review
+
+Implementation review date: 2026-03-16
+
+Scope reviewed:
+
+- `src/notifybridge/api/routes.py`
+- `src/notifybridge/static/app.js`
+- `src/notifybridge/core/ingestion.py`
+- `src/notifybridge/core/normalization.py`
+- `src/notifybridge/ingress/email.py`
+- `src/notifybridge/ingress/syslog.py`
+- `src/notifybridge/config.py`
+- `src/notifybridge/storage/repository.py`
 
 ## Bottom Line
 
-In its current intended shape, NotifyBridge is a local debugging tool, not a hardened public Internet service.
+For local-only use, the current implementation is workable.
 
-If you host it directly on the public Internet without additional controls, opportunistic scanners, spam bots, and input-fuzzing traffic will find it quickly and will likely cause one or more of these problems:
+For public Internet exposure, it is not hardened. Opportunistic scanners, spam bots, and hostile payloads would cause problems quickly. The highest-risk issues are:
 
-- SMTP spam flood and disk growth
-- Webhook path brute-forcing against API keys
-- Syslog noise and log flooding
-- UI exposure of hostile payloads
-- Resource exhaustion from oversized or deeply nested inputs
+- stored XSS in the web UI
+- completely unauthenticated management and data APIs
+- full request/body parsing before size checks or auth gates
+- unlimited audit and notification payload storage
+- SMTP and syslog paths that accept and process arbitrary input with no rate, size, or retention controls
 
-The main risk is not classic buffer overflow in pure Python application code. The bigger practical risks are:
+The main practical risk is denial of service and operator compromise through the browser, not classic Python stack-buffer overflow.
 
-- denial of service through unbounded request/body sizes
-- dangerous parsing behavior in libraries or native extensions
-- injection into logs, templates, terminals, or shell commands
-- browser-side XSS if raw payloads are rendered unsafely
+## Findings
 
-## Threat Model
+### 1. Stored XSS in the UI via `innerHTML`
 
-Assume an Internet-exposed instance will receive:
+Risk: high
 
-- random HTTP probes for common paths and admin panels
-- SMTP spam, malformed MIME, and attachment abuse
-- malformed syslog frames and high-rate UDP/TCP garbage
-- deliberately huge bodies intended to exhaust RAM, CPU, SQLite, or disk
-- payloads containing HTML, JavaScript, ANSI escapes, format placeholders, and path-like strings
+Relevant code:
 
-Threats explicitly in scope for this review:
+- `src/notifybridge/static/app.js:33`
+- `src/notifybridge/static/app.js:49`
+- `src/notifybridge/static/app.js:57`
 
-- local execution through string formatting issues
-- buffer or memory overruns in parser dependencies or native code
-- service degradation from scanners and unauthenticated traffic
+The UI renders untrusted fields directly into HTML using template strings and `innerHTML`:
 
-## Priority Findings
+- API key names
+- notification titles
+- notification bodies
+- audit summaries
 
-### 1. Public exposure should be treated as unsafe by default
+Any inbound webhook, email subject/body, syslog message, or even malicious API key name can become executable markup in the operator's browser.
 
-The spec already says Internet hardening is a non-goal for v1. That is the correct default.
+Examples:
 
-Required improvement:
+- webhook body: `<img src=x onerror=alert(1)>`
+- email subject containing HTML event handlers
+- syslog line with embedded markup
+- API key created as `<svg onload=alert(1)>`
 
-- Bind listeners to `127.0.0.1` by default, not `0.0.0.0`
-- Make public bind an explicit opt-in with a warning in config and UI
-- Document that direct Internet exposure is unsupported without a reverse proxy and filtering
+Impact:
 
-### 2. API keys in URL paths are guessable and leak easily
-
-`POST /ingest/webhook/<api_key>` is simple, but path-based secrets leak into:
-
-- access logs
-- browser history and proxy logs
-- metrics labels if carelessly instrumented
+- arbitrary JavaScript in the operator session
+- full visibility into notifications and audit data
+- unauthorized API calls from the browser against the local instance
 
 Required improvement:
 
-- Use high-entropy keys, not human-readable names like `team-red`, for authentication
-- Keep display names separate from secrets
-- Redact path secrets in logs and audit records
-- Prefer a header-based auth option if this ever moves beyond local use
+- stop using `innerHTML` for untrusted data
+- build DOM nodes and assign `.textContent`
+- add a restrictive Content Security Policy in HTTP responses
 
-### 3. Raw payload viewing creates an XSS hazard
+### 2. All management and data APIs are unauthenticated
 
-The UI requirement to display raw payloads is a major risk if hostile HTML is rendered into the page.
+Risk: high
 
-Required improvement:
+Relevant code:
 
-- Render all raw payloads as escaped text, never as HTML
-- Forbid `innerHTML`-style rendering of message bodies and audit excerpts
-- Serve with a strict Content Security Policy
-- Treat email HTML parts as inert text unless sanitized by a proven sanitizer
+- `src/notifybridge/api/routes.py:43`
+- `src/notifybridge/api/routes.py:63`
+- `src/notifybridge/api/routes.py:75`
+- `src/notifybridge/api/routes.py:83`
+- `src/notifybridge/api/routes.py:99`
+- `src/notifybridge/api/routes.py:109`
+- `src/notifybridge/api/routes.py:117`
+- `src/notifybridge/api/routes.py:129`
+- `src/notifybridge/api/routes.py:137`
+- `src/notifybridge/api/routes.py:159`
 
-If this is missed, a single inbound message can execute script in the operator’s browser.
+There is no authentication or authorization on:
 
-### 4. Unbounded payload size will let scanners and spammers win
+- listing keys
+- creating and deleting keys
+- listing notifications and audit entries
+- marking messages read
+- deleting messages
+- clearing all notifications for a key
+- subscribing to the event stream
 
-The fastest route to failure is letting HTTP, SMTP, or syslog inputs consume arbitrary memory, CPU, or disk.
+If the HTTP server is reachable from the network, anyone can:
 
-Required improvement:
+- enumerate configured API keys
+- read all captured content
+- delete or alter stored state
+- add their own API keys and inject traffic into them
 
-- Set hard maximum sizes per transport before deep parsing
-- Reject or truncate oversized bodies early
-- Cap header count, line length, MIME part count, attachment count, and syslog frame length
-- Put quotas on audit log growth and notification retention
-- Apply backpressure and connection timeouts
-
-Minimum design rule:
-
-- never call full-body reads on untrusted input without a size limit
-
-### 5. SMTP and MIME parsing are a high-risk parser surface
-
-SMTP is one of the most abuse-prone inputs here. Even in Python, parser bugs or pathological MIME trees can cause resource exhaustion.
-
-Required improvement:
-
-- Strip attachments without decoding arbitrarily large blobs into memory
-- Limit MIME nesting depth and total part count
-- Reject compressed or encoded content beyond a bounded expansion ratio
-- Run SMTP parsing in a constrained worker process if possible
-
-### 6. Syslog permissive mode is an abuse magnet
-
-Permissive syslog mode means unauthenticated traffic can become stored data. On a public host, that becomes a free write endpoint for Internet noise.
+This is acceptable only if the service remains strictly localhost-bound. It is not acceptable for public exposure.
 
 Required improvement:
 
-- Keep permissive mode disabled by default
-- Disable it entirely when bound to non-local addresses
-- Add source IP allowlists for syslog if remote ingestion is needed
-- Rate-limit and cap storage for the unassigned bucket
+- keep HTTP bound to `127.0.0.1` by default
+- if remote access is needed, put the app behind an authenticated reverse proxy
+- split ingestion auth from operator/admin auth
 
-### 7. Audit logging can become a second vulnerability
+### 3. Webhook request bodies are fully parsed before auth or size limits
 
-Logging hostile payloads is useful, but audit logs can still become:
+Risk: high
 
-- a disk exhaustion vector
-- a secret leakage vector
-- a terminal escape vector when viewed in CLI tools
+Relevant code:
+
+- `src/notifybridge/api/routes.py:152`
+- `src/notifybridge/api/routes.py:154`
+- `src/notifybridge/core/ingestion.py:23`
+
+`/ingest/webhook/{api_key}` performs `await request.json()` before calling the ingestion service. That means an attacker with an unknown key can still force:
+
+- full request body read
+- JSON decoding work
+- memory growth proportional to payload size
+
+This defeats the design goal of rejecting unknown keys before non-essential parsing.
 
 Required improvement:
 
-- store bounded excerpts by default, not unlimited raw payloads
-- escape control characters on display
-- redact likely secrets and auth material where feasible
-- rotate and cap SQLite or associated log storage
+- validate the path key before reading/parsing the full body
+- enforce a maximum content length
+- reject unsupported content types without parsing
+- stream or cap body reads
 
-## String Formatting and Local Execution Risks
+### 4. SMTP parsing is unbounded and accepts everything with `250`
 
-Python does not have C-style stack buffer overflows in normal string handling, but unsafe string use can still lead to code execution or command execution.
+Risk: high
 
-Do not do the following with untrusted fields from webhook, email, syslog, or audit data:
+Relevant code:
 
-- pass them into `eval`, `exec`, or dynamic imports
-- interpolate them into shell commands
-- use them as format strings for logging or templating
-- use them to build filesystem paths without normalization and containment checks
+- `src/notifybridge/ingress/email.py:10`
+- `src/notifybridge/ingress/email.py:11`
+- `src/notifybridge/core/normalization.py:36`
+- `src/notifybridge/core/ingestion.py:56`
 
-Implementation rules:
+The SMTP handler hands the full raw message to the parser and always returns `"250 Message accepted"`, even when the email is rejected at the application level.
 
-- Always pass external data as parameters, never executable template fragments
-- Use subprocess argument arrays, never `shell=True`, if subprocesses are ever needed
-- Use parameterized SQLite queries everywhere
-- Keep Jinja or other template engines in autoescape mode
-- Never use user-controlled strings as the template itself
+Practical consequences on an Internet-exposed host:
 
-Examples of patterns to avoid:
+- the service becomes a spam sink
+- bots can fill SQLite with rejected-message audit entries
+- large or deeply nested MIME messages can consume CPU and memory
+- attachment-heavy messages are still parsed into memory before being "stripped"
 
-```python
-logger.info(payload)  # bad if downstream logging treats % sequences specially
-os.system(f"mail-parser {subject}")  # command injection
-html = f"<div>{raw_payload}</div>"  # XSS
-query = f"DELETE FROM notifications WHERE api_key = '{api_key}'"  # SQL injection
+The current code has no visible limits on:
+
+- total SMTP message size
+- header count/length
+- MIME part count
+- nesting depth
+- decoded expansion
+
+Required improvement:
+
+- reject oversized mail during SMTP transaction handling
+- return a reject status for clearly invalid or oversized inputs
+- cap MIME complexity before full parse
+- bound audit payload size for rejected mail
+
+### 5. Syslog path has no size or rate controls and spawns unbounded tasks
+
+Risk: medium-high
+
+Relevant code:
+
+- `src/notifybridge/ingress/syslog.py:12`
+- `src/notifybridge/ingress/syslog.py:13`
+- `src/notifybridge/ingress/syslog.py:14`
+
+Every datagram results in:
+
+- UTF-8 decode of the full payload
+- task creation with `asyncio.create_task`
+- downstream SQLite writes for accepted or rejected traffic
+
+There is no visible limit on datagram size, arrival rate, or number of outstanding ingestion tasks. A burst of UDP garbage can create task pressure and storage churn very quickly.
+
+This is particularly bad if permissive syslog mode is enabled, because unauthenticated Internet noise becomes stored notifications.
+
+Required improvement:
+
+- bound syslog frame length
+- drop or sample excess traffic
+- use a bounded queue instead of creating a task per packet
+- forbid permissive syslog on non-local binds
+
+### 6. Raw payload retention is unlimited and easy to abuse
+
+Risk: medium-high
+
+Relevant code:
+
+- `src/notifybridge/core/ingestion.py:30`
+- `src/notifybridge/core/ingestion.py:64`
+- `src/notifybridge/core/ingestion.py:101`
+- `src/notifybridge/storage/repository.py:65`
+- `src/notifybridge/storage/repository.py:96`
+- `src/notifybridge/storage/schema.py:16`
+- `src/notifybridge/storage/schema.py:27`
+
+Notifications and audit entries store full raw payloads as `TEXT` with no pruning, truncation, retention, or quota logic.
+
+An attacker does not need code execution to win here. Repeated oversized requests, spam mail, or syslog floods can turn this into:
+
+- disk exhaustion
+- oversized SQLite growth
+- degraded UI/API performance when listing data
+
+Required improvement:
+
+- store bounded excerpts by default
+- cap record count and total database size
+- add pruning/retention policies
+- separate full-payload retention behind an explicit local-debug setting
+
+### 7. API key values are operator-controlled and can become attack payloads
+
+Risk: medium
+
+Relevant code:
+
+- `src/notifybridge/api/routes.py:65`
+- `src/notifybridge/api/routes.py:66`
+- `src/notifybridge/storage/repository.py:33`
+- `src/notifybridge/static/app.js:35`
+
+`POST /api/keys` accepts any non-empty trimmed string as an API key. There is no format restriction, length limit, or entropy requirement.
+
+That creates multiple problems:
+
+- XSS through rendered key names in the UI
+- path abuse or awkward routing with slash-like or control characters
+- weak, guessable keys if operators use names like `team-red`
+- key disclosure because the secret is also used as the user-facing label
+
+Required improvement:
+
+- separate display name from secret key
+- require random high-entropy secrets
+- validate allowed character set and length
+- never render secret material directly into the UI
+
+### 8. No response hardening headers are set
+
+Risk: medium
+
+Relevant code:
+
+- `src/notifybridge/api/app.py:10`
+- `src/notifybridge/api/routes.py:33`
+
+The app does not set visible browser hardening headers such as:
+
+- `Content-Security-Policy`
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy`
+- `Cache-Control` for sensitive API data where appropriate
+
+Because there is already a stored-XSS path, the missing CSP matters more than it otherwise would.
+
+Required improvement:
+
+- add CSP at the FastAPI layer or reverse proxy
+- add basic response hardening headers
+
+### 9. Rejected email and webhook inputs still do expensive string expansion
+
+Risk: medium
+
+Relevant code:
+
+- `src/notifybridge/core/ingestion.py:30`
+- `src/notifybridge/core/ingestion.py:64`
+
+Rejected inputs are still converted to full strings for audit logging:
+
+- `str(payload)` for unknown-key webhooks
+- `raw_message.decode(..., errors="replace")` for rejected email
+
+This means unknown-key traffic can still allocate large Python strings and write them to disk.
+
+Required improvement:
+
+- record only bounded excerpts for rejected traffic
+- compute excerpts without full decode where possible
+- enforce transport-level size caps before reaching these code paths
+
+### 10. Email parsing surface is broader than the auth check requires
+
+Risk: medium
+
+Relevant code:
+
+- `src/notifybridge/core/normalization.py:23`
+- `src/notifybridge/core/normalization.py:37`
+- `src/notifybridge/core/ingestion.py:57`
+
+The code correctly uses header parsing to extract the auth candidate first, which is good. But for accepted mail it then fully parses the message with `BytesParser(...).parsebytes(raw_message)` and walks all parts.
+
+That does not create classic Python buffer-overrun risk by itself, but it does create:
+
+- parser complexity risk
+- memory pressure risk
+- exposure to bugs in library code and any native components it depends on
+
+Required improvement:
+
+- set explicit message-size and part-count limits
+- treat attachment and multipart parsing as a constrained subsystem
+- consider isolating mail parsing if the product ever accepts remote/public traffic
+
+## Notes On The Stated Threat Model
+
+### "Local execution through string formatting issues"
+
+I did not find direct `eval`, `exec`, `os.system`, `shell=True`, or SQL string concatenation in the current implementation.
+
+That is the good news.
+
+The actual execution path today is browser-side, not local Python-side:
+
+- hostile input is stored
+- the frontend injects it into the DOM with `innerHTML`
+- the operator opens the UI
+- the payload executes in the browser context
+
+So the current "string formatting" issue is a stored XSS issue, not shell injection.
+
+### "Overrunning buffers"
+
+I did not find obvious native-memory-unsafe code in the repository.
+
+In pure Python, classic stack/heap buffer overrun risk is much lower than in C/C++. The realistic memory-safety concern here is:
+
+- large or pathological inputs causing parser or allocator stress
+- bugs in dependency/native layers
+- unbounded payload retention exhausting RAM or disk
+
+The hot spots are:
+
+- JSON request parsing in FastAPI
+- email parsing in the stdlib
+- SQLite storage growth
+- unbounded syslog task creation
+
+## What To Fix First
+
+1. Replace all `innerHTML` rendering of untrusted data with safe DOM construction using `textContent`.
+2. Keep the service localhost-only unless it is behind an authenticated reverse proxy.
+3. Add strict per-transport size limits before full parse or storage.
+4. Add retention caps and raw-payload truncation for both notifications and audit entries.
+5. Restrict API key format and separate display labels from actual secrets.
+6. Add backpressure or bounded queues for syslog ingestion.
+7. Add browser hardening headers, especially CSP.
+
+## Verification Note
+
+Tests were available and passed with:
+
+```bash
+uv run pytest -q
 ```
 
-Safer direction:
-
-```python
-logger.info("received payload: %r", payload)
-subprocess.run(["mail-parser", subject], check=True)
-cursor.execute("DELETE FROM notifications WHERE api_key = ?", (api_key,))
-```
-
-## Buffer Overrun and Native-Library Risks
-
-If the app stays in pure Python plus well-maintained libraries, classic memory corruption risk is lower, but not zero.
-
-Risk sources:
-
-- C extensions in email, HTTP, TLS, compression, or SQLite-adjacent packages
-- reverse proxies or sidecars written in C/C++
-- image, archive, or attachment parsing libraries
-
-Required improvement:
-
-- Keep dependencies minimal
-- Prefer mature libraries with active security maintenance
-- Pin versions and update regularly
-- Avoid parsing archives, office docs, images, or rich attachments in v1
-- Consider process isolation for high-risk parsers
-
-If attachment support grows later, isolate it in a separate worker with:
-
-- memory limits
-- CPU limits
-- temp directory isolation
-- no shell execution
-
-## Anti-Bot and Internet Exposure Controls
-
-If public hosting is unavoidable, minimum controls should include:
-
-- reverse proxy in front of the app
-- IP-based rate limiting per transport
-- connection count limits
-- request body size limits
-- SMTP tarpitting or upstream filtering
-- fail2ban-style response only if it is operationally justified
-- optional allowlists for webhook and syslog senders
-- TLS terminated at the proxy
-
-Recommended stance:
-
-- webhook: public only behind a reverse proxy with rate limits
-- SMTP: do not expose directly unless you want to operate a spam sink
-- syslog: do not expose permissive mode publicly
-
-## Secure Implementation Checklist
-
-- Default bind address is localhost only
-- Public bind requires explicit config opt-in
-- API keys are random, long, and separately named for display
-- Unknown keys are rejected before full payload parsing
-- Per-transport size, time, and concurrency limits are enforced
-- Raw payload rendering is HTML-escaped
-- CSP is enabled on the UI
-- SQLite queries are parameterized
-- No `eval`, `exec`, or `shell=True` on untrusted input
-- Attachment handling is disabled or tightly bounded
-- Audit storage is size-limited and rotated/pruned
-- Unassigned syslog bucket is disabled on public hosts
-- Secrets are redacted in logs and UI where practical
-
-## Recommended Spec Changes
-
-These should be added to the spec before implementation:
-
-1. State that the default bind address is localhost only.
-2. Require per-transport maximum payload sizes and parsing depth limits.
-3. Require random high-entropy API keys distinct from human-readable labels.
-4. Require HTML escaping for raw payload and message rendering.
-5. Forbid permissive syslog mode on non-local binds.
-6. Require retention caps and pruning for notifications and audit entries.
-7. Require parameterized SQL and prohibit shell execution on untrusted input.
-8. State that attachment parsing remains disabled or strictly bounded in v1.
-
-## Practical Answer To The Main Question
-
-If you host the current design directly on the Internet, spam bots and scanners probably will get the better of you operationally even if they do not achieve code execution.
-
-With strict size limits, localhost-by-default binding, escaped rendering, random secrets, disabled public permissive syslog, and a reverse proxy enforcing rate limits, the design becomes reasonable for controlled exposure. Without those controls, expect nuisance traffic, storage abuse, and UI-level injection attempts almost immediately.
+Passing tests here only show expected behavior, not security hardening. The issues above are design and implementation exposure gaps rather than test regressions.

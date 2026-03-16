@@ -13,23 +13,32 @@
           <p class="eyebrow">NotifyBridge</p>
           <h1>Local notification intake, replay, and triage.</h1>
         </div>
-        <button id="theme-toggle" class="button ghost">Toggle theme</button>
+        <div class="hero-actions">
+          <button id="random-button" class="button ghost">Random Demo</button>
+          <button id="clear-all-button" class="button ghost">Clear All</button>
+          <button id="theme-toggle" class="button ghost">Toggle theme</button>
+        </div>
       </header>
       <section class="grid">
         <section class="panel">
           <h2>API Keys</h2>
           <form id="key-form">
-            <input name="api_key" placeholder="team-red" />
-            <button class="button" type="submit">Add key</button>
+            <button class="button" type="submit">Generate key</button>
           </form>
           <div id="keys"></div>
         </section>
         <section class="panel">
-          <h2>Notifications</h2>
+          <div class="panel-heading">
+            <h2>Notifications</h2>
+            <button id="clear-filter-button" class="button ghost">Filter: All</button>
+          </div>
           <div id="notifications"></div>
         </section>
-        <section class="panel">
-          <h2>Audit Log</h2>
+        <section class="panel collapsed" id="audit-panel" data-collapsed="true">
+          <div class="panel-heading">
+            <h2>Audit Log</h2>
+            <button id="audit-toggle-button" class="button ghost">Expand Audit Log</button>
+          </div>
           <div id="audit"></div>
         </section>
       </section>

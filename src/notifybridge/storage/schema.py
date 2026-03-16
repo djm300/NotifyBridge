@@ -6,6 +6,7 @@ import sqlite3
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS api_keys (
     api_key TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -41,5 +42,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 
 def init_db(connection: sqlite3.Connection) -> None:
+    """Create all required tables if they do not already exist.
+
+    Inputs:
+    - `connection`: open SQLite connection.
+
+    Outputs:
+    - Applies schema DDL and commits it on the provided connection.
+    """
     connection.executescript(SCHEMA)
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(api_keys)").fetchall()}
+    if "enabled" not in columns:
+        connection.execute("ALTER TABLE api_keys ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
     connection.commit()

@@ -7,6 +7,14 @@ from typing import Any
 
 
 def normalize_webhook(payload: Any) -> tuple[str, str, str, dict[str, Any]]:
+    """Normalize a webhook payload into notification fields.
+
+    Inputs:
+    - `payload`: arbitrary webhook body, typically dict or string.
+
+    Outputs:
+    - `(title, body, raw_payload, metadata)` for notification persistence.
+    """
     raw_payload = json.dumps(payload, sort_keys=True) if not isinstance(payload, str) else payload
     if isinstance(payload, dict):
         title = str(payload.get("title") or "Webhook message")
@@ -20,6 +28,15 @@ def normalize_webhook(payload: Any) -> tuple[str, str, str, dict[str, Any]]:
 
 
 def extract_email_auth_candidate(raw_message: bytes, domain: str) -> tuple[str | None, str]:
+    """Extract the API key candidate from the primary email `To:` header.
+
+    Inputs:
+    - `raw_message`: raw RFC 2822 message bytes.
+    - `domain`: accepted local email domain suffix.
+
+    Outputs:
+    - `(api_key_candidate, raw_to_header)`.
+    """
     headers = BytesHeaderParser(policy=policy.default).parsebytes(raw_message)
     to_header = headers.get("To", "")
     candidate = None
@@ -34,6 +51,14 @@ def extract_email_auth_candidate(raw_message: bytes, domain: str) -> tuple[str |
 
 
 def normalize_email(raw_message: bytes) -> tuple[str, str, str, dict[str, Any]]:
+    """Normalize an email into notification fields.
+
+    Inputs:
+    - `raw_message`: raw RFC 2822 message bytes.
+
+    Outputs:
+    - `(title, body, raw_payload, metadata)` with attachments counted and stripped.
+    """
     message = BytesParser(policy=policy.default).parsebytes(raw_message)
     title = message.get("Subject", "(no subject)")
     body = ""
@@ -60,6 +85,14 @@ def normalize_email(raw_message: bytes) -> tuple[str, str, str, dict[str, Any]]:
 
 
 def extract_syslog_auth(line: str) -> tuple[str | None, dict[str, Any]]:
+    """Extract a syslog API key candidate from structured data or fallback prefix.
+
+    Inputs:
+    - `line`: one decoded syslog line.
+
+    Outputs:
+    - `(api_key_candidate, metadata)` where metadata records which auth source matched.
+    """
     metadata: dict[str, Any] = {}
     structured_marker = "[notifybridge@32473"
     if structured_marker in line and 'apiKey="' in line:
@@ -83,6 +116,14 @@ def extract_syslog_auth(line: str) -> tuple[str | None, dict[str, Any]]:
 
 
 def normalize_syslog(line: str) -> tuple[str, str, str, dict[str, Any]]:
+    """Normalize a syslog line into notification fields.
+
+    Inputs:
+    - `line`: one decoded syslog line.
+
+    Outputs:
+    - `(title, body, raw_payload, metadata)` for notification persistence.
+    """
     body = line
     if "[nb:" in line and "]" in line:
         body = line.split("]", 1)[1].strip()
